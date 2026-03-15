@@ -1,0 +1,24 @@
+version: "3.9"
+
+services:
+
+  mongo:
+    image: mongo:7
+    container_name: ris_mongo
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+
+  scraper:
+    build: ./scraper
+    container_name: ris_scraper
+    restart: unless-stopped
+    depends_on:
+      - mongo
+    volumes:
+      - ./config/runtime.yml:/config/runtime.yml:ro
+
+volumes:
+  mongo_data:

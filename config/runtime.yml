@@ -1,0 +1,10 @@
+ris:
+  base_url: ""
+
+scraper:
+  interval: 86400
+
+ranges:
+  sessions:
+    start: 540
+    end: 550

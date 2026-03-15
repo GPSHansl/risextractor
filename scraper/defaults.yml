@@ -1,0 +1,7 @@
+mongo:
+  host: "mongo"
+  port: 27017
+  database: "ris"
+
+scraper:
+  request_timeout: 30
