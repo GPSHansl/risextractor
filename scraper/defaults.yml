@@ -1,7 +1,21 @@
-mongo:
+storage_mongo:
   host: "mongo"
   port: 27017
   database: "ris"
+  enabled: false
+
+storage_json:
+  output_dir: "output"
+  enabled: true
 
 scraper:
+  interval: 86400
   request_timeout: 30
+
+ris:
+  base_url: "https://example.com"
+
+ranges:
+  sessions:
+    start: 1
+    end: 1000
