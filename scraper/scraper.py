@@ -108,9 +108,9 @@ def download_session_documents(session_obj, top_doc_map=None, base_output_dir="d
         log.error("Error parsing session date '%s': %s", session_date_str, e)
         return
     
-    # Create directory: output/documents/YYYYMMDD_SID/ (SID zero-padded 4-stellig)
+    # Create directory: output/documents/SID_YYYYMMDD/ (SID zero-padded 4-stellig)
     sid = str(session_obj["sid"]).zfill(4)
-    session_dir = os.path.join(base_output_dir, f"{date_yyyymmdd}_{sid}")
+    session_dir = os.path.join(base_output_dir, f"{sid}_{date_yyyymmdd}")
     os.makedirs(session_dir, exist_ok=True)
     
     for doc in session_obj["dokumente"]:
