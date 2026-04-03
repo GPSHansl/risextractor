@@ -5,12 +5,13 @@ storage_mongo:
   enabled: false
 
 storage_json:
-  output_dir: "output"
+  output_dir: "output/json"
   enabled: true
 
 scraper:
   interval: 86400
   request_timeout: 30
+  output_dir: "output/documents"
 
 ris:
   base_url: "https://example.com"

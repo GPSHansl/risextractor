@@ -26,6 +26,10 @@ config = load_config()
 BASE_URL = config["ris"]["base_url"]
 SCRAPE_INTERVAL = config["scraper"]["interval"]
 REQUEST_TIMEOUT = config["scraper"]["request_timeout"]
+DOCUMENTS_OUTPUT_DIR = os.path.join(
+    config["storage_json"].get("output_dir", "output"),
+    config["scraper"].get("output_dir", "documents")
+)
 SESSION_RANGE = config["ranges"]["sessions"]
 
 # =========================
@@ -61,7 +65,7 @@ def parse_documents(soup):
                     "url": doc_url
                 }
                 
-                # Prefer document with title; only overwrite if new doc has title and old doesn't
+                # Prefer document with title; only overwrite if new doc has title and old does   
                 if doc_id not in docs_dict or (titel and not docs_dict[doc_id].get("titel")):
                     docs_dict[doc_id] = doc_obj
                     log.debug("Found document: %s (id=%s, type=%s)", titel, doc_id, doc_type)
@@ -69,7 +73,7 @@ def parse_documents(soup):
     return list(docs_dict.values())
 
 
-def download_session_documents(session_obj, base_output_dir="documents"):
+def download_session_documents(session_obj, top_doc_map=None, base_output_dir="documents"):
     """Download all documents for a session and save with metadata files for paperlessNGX.
     Directory structure: documents/YYYYMMDD_SID/
     Files: SID_YYYYMMDD_originalfilename
@@ -104,11 +108,10 @@ def download_session_documents(session_obj, base_output_dir="documents"):
         log.error("Error parsing session date '%s': %s", session_date_str, e)
         return
     
-    # Create directory: documents/YYYYMMDD_SID/
-    session_dir = os.path.join(base_output_dir, f"{date_yyyymmdd}_{session_obj['sid']}")
+    # Create directory: output/documents/YYYYMMDD_SID/ (SID zero-padded 4-stellig)
+    sid = str(session_obj["sid"]).zfill(4)
+    session_dir = os.path.join(base_output_dir, f"{date_yyyymmdd}_{sid}")
     os.makedirs(session_dir, exist_ok=True)
-    
-    sid = session_obj["sid"]
     
     for doc in session_obj["dokumente"]:
         doc_id = doc["id"]
@@ -143,9 +146,17 @@ def download_session_documents(session_obj, base_output_dir="documents"):
                 if not filename or filename == "getfile.asp":
                     filename = f"document_{doc_id}"
             
-            # Prepend SID_YYYYMMDD to filename
+            # Prepend SID_YYYYMMDD_[TOP] to filename (SID 4-stellig, TOP 6-stellig)
             name, ext = os.path.splitext(filename)
-            final_filename = f"{sid}_{date_yyyymmdd}_{name}{ext}"
+            top_meta = (top_doc_map or {}).get(doc_id)
+            tid_part = ""
+            if top_meta and top_meta.get("tid"):
+                try:
+                    tid_part = f"_{int(top_meta.get('tid')):06d}"
+                except (ValueError, TypeError):
+                    tid_part = f"_{top_meta.get('tid')}"
+
+            final_filename = f"{sid}_{date_yyyymmdd}{tid_part}_{name}{ext}"
             filepath = os.path.join(session_dir, final_filename)
             
             # Write file
@@ -161,12 +172,28 @@ def download_session_documents(session_obj, base_output_dir="documents"):
                 "document_id": doc_id,
                 "document_title": doc_title,
                 "document_type": doc_type,
+                "document_filename": filename,
+                "document_url": doc_url,
                 "session_id": sid,
                 "session_date": date_yyyymmdd,
-                "original_filename": filename,
-                "original_url": doc_url
+                "session_title": session_obj.get("title"),
+                "session_url": session_obj.get("url_sitzung"),
+                "top_list_url": session_obj.get("url_top")
             }
-            metadata_filename = f"{sid}_{date_yyyymmdd}_{name}.json"
+            
+            # Include TOP meta if this document belongs to a TOP
+            top_meta = (top_doc_map or {}).get(doc_id)
+            if top_meta:
+                metadata["top_lfdnr"] = top_meta.get("top_lfdnr")
+                metadata["top_titel"] = top_meta.get("top_titel")
+                metadata["top_url"] = top_meta.get("top_url")
+            tid_part_meta = ""
+            if top_meta and top_meta.get("tid"):
+                try:
+                    tid_part_meta = f"_{int(top_meta.get('tid')):06d}"
+                except (ValueError, TypeError):
+                    tid_part_meta = f"_{top_meta.get('tid')}"
+            metadata_filename = f"{sid}_{date_yyyymmdd}{tid_part_meta}_{name}.json"
             metadata_filepath = os.path.join(session_dir, metadata_filename)
             
             with open(metadata_filepath, "w", encoding="utf-8") as f:
@@ -245,7 +272,21 @@ def get_tops(sid):
                 
                 tops.append(top_data)
 
-    return tops, list(all_top_documents.values())
+    # Build a map of document ID -> parent TOP metadata for quick lookup
+    top_doc_map = {}
+    for top in tops:
+        if "dokumente" in top:
+            for doc_id in top["dokumente"]:
+                # keep first occurrence if doc belongs to multiple TOPs
+                if doc_id not in top_doc_map:
+                    top_doc_map[doc_id] = {
+                        "top_lfdnr": top.get("top_lfdnr"),
+                        "top_titel": top.get("top_titel"),
+                        "top_url": top.get("url"),
+                        "tid": top.get("tid")
+                    }
+
+    return tops, list(all_top_documents.values()), top_doc_map
 
 
 def scrape_session(sid):
@@ -282,7 +323,7 @@ def scrape_session(sid):
 
     url_top = urljoin(BASE_URL, f"si0057.asp?__ksinr={sid}")
     session_obj["url_top"] = url_top
-    tops, top_documents = get_tops(sid)
+    tops, top_documents, top_doc_map = get_tops(sid)
     session_obj["tops"] = tops
     
     # Parse documents from session page and combine with TOP documents
@@ -300,7 +341,7 @@ def scrape_session(sid):
         session_obj["dokumente"] = list(docs_dict.values())
 
     # Download documents for this session
-    download_session_documents(session_obj)
+    download_session_documents(session_obj, top_doc_map, base_output_dir=DOCUMENTS_OUTPUT_DIR)
 
     return session_obj
 
