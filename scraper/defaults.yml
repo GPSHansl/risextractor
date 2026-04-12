@@ -13,6 +13,12 @@ scraper:
   request_timeout: 30
   output_dir: "output/documents"
 
+paperless:
+  enabled: false
+  url: "http://paperless:8000"
+  token: ""
+  checksum_file: "checksums.json"
+
 ris:
   base_url: "https://example.com"
 

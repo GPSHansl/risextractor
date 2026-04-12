@@ -14,6 +14,7 @@ from storage_json import JSONStorage
 from storage_init import init_storages
 from storage_base import dispatch, set_storages
 from scraper_config import load_config
+from paperless_uploader_new import PaperlessUploader
 
 logging.basicConfig(
     level=logging.INFO,
@@ -31,6 +32,12 @@ DOCUMENTS_OUTPUT_DIR = os.path.join(
     config["scraper"].get("output_dir", "documents")
 )
 SESSION_RANGE = config["ranges"]["sessions"]
+
+# =========================
+# PAPERLESS UPLOADER INITIALISIERUNG
+# =========================
+
+paperless_uploader = PaperlessUploader(config.get("paperless", {}), config["storage_json"].get("output_dir", "output"))
 
 # =========================
 # STORAGE INITIALISIERUNG
@@ -200,6 +207,9 @@ def download_session_documents(session_obj, top_doc_map=None, base_output_dir="d
                 json.dump(metadata, f, indent=2, ensure_ascii=False)
             
             log.debug("Created metadata file %s", metadata_filepath)
+            
+            # Process document for checksum and Paperless upload
+            paperless_uploader.process_document(filepath, metadata)
             
         except Exception as e:
             log.error("Error downloading document %s: %s", doc_id, e)
