@@ -22,7 +22,7 @@ class JSONStorage(BaseStorage):
             return
 
         sid = session_obj["sid"]
-        path = os.path.join(self.output_dir, f"session_{sid}.json")
+        path = os.path.join(self.output_dir, f"session_{int(sid):04d}.json")
 
         try:
             with open(path, "w", encoding="utf-8") as f:

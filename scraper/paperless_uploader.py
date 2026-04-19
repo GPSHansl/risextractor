@@ -10,8 +10,8 @@ class PaperlessUploader:
     def __init__(self, config, base_dir="output"):
         self.enabled = config.get("enabled", False)
         if self.enabled:
-            self.url = config.get("url", "http://paperless:8000")
-            self.token = config.get("token", "")
+            self.url = config.get("url", None)
+            self.token = config.get("token", None)
             checksum_file = config.get("checksum_file", "checksums.json")
             self.checksum_file = os.path.join(base_dir, checksum_file)
             os.makedirs(base_dir, exist_ok=True)

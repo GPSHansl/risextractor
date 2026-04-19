@@ -37,7 +37,10 @@ SESSION_RANGE = config["ranges"]["sessions"]
 # PAPERLESS UPLOADER INITIALISIERUNG
 # =========================
 
-paperless_uploader = PaperlessUploader(config.get("paperless", {}), config["storage_json"].get("output_dir", "output"))
+try:
+    paperless_uploader = PaperlessUploader(config.get("paperless", {}), config["storage_json"].get("output_dir", "output"))
+except Exception as e:
+    log.error("Error initializing PaperlessUploader: %s", e)
 
 # =========================
 # STORAGE INITIALISIERUNG
@@ -85,15 +88,24 @@ def download_session_documents(session_obj, top_doc_map=None, base_output_dir="d
     Directory structure: documents/YYYYMMDD_SID/
     Files: SID_YYYYMMDD_originalfilename
     """
+    counters = {
+        "download_ok": 0,
+        "download_failed": 0,
+        "upload_attempted": 0,
+        "upload_success": 0,
+        "upload_failed": 0,
+        "upload_skipped": 0,
+    }
+
     if "dokumente" not in session_obj or not session_obj["dokumente"]:
         log.debug("No documents to download for session %s", session_obj["sid"])
-        return
+        return counters
     
     # Parse session date - assuming sidat format is something like "01.04.2026" or similar
     session_date_str = session_obj.get("sidat", "").strip()
     if not session_date_str:
         log.warning("No session date found for session %s, skipping document download", session_obj["sid"])
-        return
+        return counters
     
     # Try to parse date and convert to YYYYMMDD format
     try:
@@ -108,12 +120,12 @@ def download_session_documents(session_obj, top_doc_map=None, base_output_dir="d
         
         if not date_obj:
             log.warning("Could not parse session date '%s' for session %s", session_date_str, session_obj["sid"])
-            return
+            return counters
         
         date_yyyymmdd = date_obj.strftime("%Y%m%d")
     except Exception as e:
         log.error("Error parsing session date '%s': %s", session_date_str, e)
-        return
+        return counters
     
     # Create directory: output/documents/SID_YYYYMMDD/ (SID zero-padded 4-stellig)
     sid = str(session_obj["sid"]).zfill(4)
@@ -173,6 +185,7 @@ def download_session_documents(session_obj, top_doc_map=None, base_output_dir="d
                         f.write(chunk)
             
             log.info("Saved document %s to %s", doc_id, filepath)
+            counters["download_ok"] += 1
             
             # Create paperlessNGX metadata JSON file
             metadata = {
@@ -185,7 +198,10 @@ def download_session_documents(session_obj, top_doc_map=None, base_output_dir="d
                 "session_date": date_yyyymmdd,
                 "session_title": session_obj.get("title"),
                 "session_url": session_obj.get("url_sitzung"),
-                "top_list_url": session_obj.get("url_top")
+                "top_list_url": session_obj.get("url_top"),
+                "sigrname": session_obj.get("sigrname"),
+                "siname": session_obj.get("siname"),
+                "heading": session_obj.get("heading")
             }
             
             # Include TOP meta if this document belongs to a TOP
@@ -209,10 +225,22 @@ def download_session_documents(session_obj, top_doc_map=None, base_output_dir="d
             log.debug("Created metadata file %s", metadata_filepath)
             
             # Process document for checksum and Paperless upload
-            paperless_uploader.process_document(filepath, metadata)
-            
+            try:
+                upload_result = paperless_uploader.process_document(filepath, metadata)
+                if upload_result:
+                    counters["upload_attempted"] += upload_result.get("upload_attempted", 0)
+                    counters["upload_success"] += upload_result.get("upload_success", 0)
+                    counters["upload_failed"] += upload_result.get("upload_failed", 0)
+                    counters["upload_skipped"] += upload_result.get("upload_skipped", 0)
+            except Exception as e:
+                log.error("Error processing document %s: %s", doc_id, e)
+                counters["upload_failed"] += 1
+
         except Exception as e:
             log.error("Error downloading document %s: %s", doc_id, e)
+            counters["download_failed"] += 1
+
+    return counters
 
 
 def scrape_vorlage(tid, url):
@@ -309,7 +337,7 @@ def scrape_session(sid):
 
     if not htmlSession:
         log.warning("Session %s not found", sid)
-        return None
+        return None, None
 
     soup = BeautifulSoup(htmlSession, "lxml")
 
@@ -329,7 +357,7 @@ def scrape_session(sid):
 
     if not session_obj["heading"] or session_obj["heading"] == 'SessionNet Fehlermeldung':
         log.warning("Session %s has no valid title", sid)
-        return None
+        return None, None
 
     url_top = urljoin(BASE_URL, f"si0057.asp?__ksinr={sid}")
     session_obj["url_top"] = url_top
@@ -351,9 +379,20 @@ def scrape_session(sid):
         session_obj["dokumente"] = list(docs_dict.values())
 
     # Download documents for this session
-    download_session_documents(session_obj, top_doc_map, base_output_dir=DOCUMENTS_OUTPUT_DIR)
+    counters = download_session_documents(session_obj, top_doc_map, base_output_dir=DOCUMENTS_OUTPUT_DIR)
 
-    return session_obj
+    log.info(
+        "Session %s counters: downloads ok=%d failed=%d | uploads attempted=%d ok=%d failed=%d skipped=%d",
+        sid,
+        counters["download_ok"],
+        counters["download_failed"],
+        counters["upload_attempted"],
+        counters["upload_success"],
+        counters["upload_failed"],
+        counters["upload_skipped"],
+    )
+
+    return session_obj, counters
 
 
 # =========================
@@ -367,16 +406,68 @@ def run():
 
     log.info("Starting scraping run: sessions %s-%s", start, end)
 
+    run_counters = {
+        "download_ok": 0,
+        "download_failed": 0,
+        "upload_attempted": 0,
+        "upload_success": 0,
+        "upload_failed": 0,
+        "upload_skipped": 0,
+    }
+
     for sid in range(start, end):
 
         try:
-            currSession = scrape_session(sid)
+            currSession, session_counters = scrape_session(sid)
 
             if currSession:
                 dispatch("store_session", currSession)
 
+            if session_counters:
+                run_counters["download_ok"] += session_counters.get("download_ok", 0)
+                run_counters["download_failed"] += session_counters.get("download_failed", 0)
+                run_counters["upload_attempted"] += session_counters.get("upload_attempted", 0)
+                run_counters["upload_success"] += session_counters.get("upload_success", 0)
+                run_counters["upload_failed"] += session_counters.get("upload_failed", 0)
+                run_counters["upload_skipped"] += session_counters.get("upload_skipped", 0)
+
         except Exception:
             log.exception("Error scraping session %s", sid)
+
+    log.info(
+        "Run counters: downloads ok=%d failed=%d | uploads attempted=%d ok=%d failed=%d skipped=%d",
+        run_counters["download_ok"],
+        run_counters["download_failed"],
+        run_counters["upload_attempted"],
+        run_counters["upload_success"],
+        run_counters["upload_failed"],
+        run_counters["upload_skipped"],
+    )
+
+    checksums_ok = 0
+    checksums_error = 0
+    checksums_total = 0
+
+    for entry in paperless_uploader.checksums.values():
+        status = None
+        if isinstance(entry, dict):
+            status = entry.get("status")
+        elif isinstance(entry, str):
+            # Legacy checksum format (plain string) counts as successful.
+            status = "ok"
+
+        if status == "ok":
+            checksums_ok += 1
+        else:
+            checksums_error += 1
+
+    checksums_total = checksums_ok + checksums_error
+    log.info(
+        "Checksums counters: total=%d ok=%d error=%d",
+        checksums_total,
+        checksums_ok,
+        checksums_error,
+    )
 
 
 def main():
